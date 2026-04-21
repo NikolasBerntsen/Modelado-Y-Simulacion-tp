@@ -52,8 +52,7 @@ import {
   simpson13,
   simpson38,
   midpoint,
-  euler,
-  rungeKutta4,
+  solveODE,
   monteCarlo
 } from './lib/algorithms';
 import { AlgorithmChart } from './components/AlgorithmChart';
@@ -75,7 +74,7 @@ math.import({
 
 type AlgorithmType = 
   | 'bisection' | 'fixedPoint' | 'aitken' | 'newton' | 'secant' | 'regulaFalsi'
-  | 'lagrange' | 'trapezoidal' | 'simpson13' | 'simpson38' | 'euler' | 'rk4' | 'montecarlo' | 'midpoint';
+  | 'lagrange' | 'trapezoidal' | 'simpson13' | 'simpson38' | 'ode' | 'montecarlo' | 'midpoint';
 
 interface AlgorithmConfig {
   id: AlgorithmType;
@@ -152,16 +151,10 @@ const ALGORITHMS: AlgorithmConfig[] = [
     fields: ['formula', 'a', 'b', 'n']
   },
   {
-    id: 'euler',
-    name: 'Método de Euler',
+    id: 'ode',
+    name: 'Ecuaciones Diferenciales (Euler / RK)',
     description: 'Resuelve EDOs de primer orden paso a paso.',
-    fields: ['formula', 't0', 'y0', 't_end', 'h']
-  },
-  {
-    id: 'rk4',
-    name: 'Runge-Kutta 4',
-    description: 'Método de alta precisión para resolver EDOs.',
-    fields: ['formula', 't0', 'y0', 't_end', 'h']
+    fields: ['odeMethod', 'rkOrder', 'formula', 'exactFormula', 't0', 'y0', 't_end', 'h']
   },
   {
     id: 'montecarlo',
@@ -196,7 +189,8 @@ export default function App() {
     tolerance: 0.0001,
     maxIterations: 50,
     points: [{ x: 1, y: 1 }, { x: 2, y: 4 }, { x: 3, y: 9 }],
-    n: 10,
+    odeMethod: 'euler',
+    rkOrder: 4,
     h: 0.1,
     t0: 0,
     y0: 1,
@@ -217,6 +211,7 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
+  const [comparisonCategory, setComparisonCategory] = useState<'roots' | 'integration' | 'ode'>('roots');
   const [comparisonResults, setComparisonResults] = useState<any[]>([]);
   const [fromComparison, setFromComparison] = useState(false);
   const [showStatsModal, setShowStatsModal] = useState(false);
@@ -237,27 +232,39 @@ export default function App() {
   const runComparison = () => {
     setExpandedAitkenRows([]);
     setExpandedSecantRows([]);
-    const methods: { id: AlgorithmType; name: string; run: (p: AlgorithmParams) => AlgorithmOutput }[] = [
-      { id: 'bisection', name: 'Bisección', run: bisection },
-      { id: 'fixedPoint', name: 'Punto Fijo', run: fixedPoint },
-      { id: 'aitken', name: 'Aitken', run: aitken },
-      { id: 'newton', name: 'Newton-Raphson', run: newtonRaphson },
-      { id: 'secant', name: 'Secante', run: secant },
-      { id: 'regulaFalsi', name: 'Regula Falsi', run: regulaFalsi },
-      { id: 'trapezoidal', name: 'Trapecio', run: trapezoidal },
-      { id: 'simpson13', name: 'Simpson 1/3', run: simpson13 },
-      { id: 'simpson38', name: 'Simpson 3/8', run: simpson38 },
-      { id: 'midpoint', name: 'Rectángulos (Medio)', run: midpoint },
-      { id: 'montecarlo', name: 'Monte Carlo', run: monteCarlo },
-      { id: 'euler', name: 'Euler', run: euler },
-      { id: 'rk4', name: 'Runge-Kutta 4', run: rungeKutta4 },
-      { id: 'lagrange', name: 'Lagrange', run: lagrange },
-    ];
+    
+    let methodsToRun: { id: AlgorithmType; name: string; run: (p: AlgorithmParams) => AlgorithmOutput; customParams?: Partial<AlgorithmParams> }[] = [];
 
-    const results = methods.map(m => {
-      const p = { ...params };
-      // Only auto-recommend if g_formula is empty or default AND we haven't manually set it in the comparison view
-      // Actually, if we add a field in the comparison view, we should just use what's in params.
+    if (comparisonCategory === 'roots') {
+      methodsToRun = [
+        { id: 'bisection', name: 'Bisección', run: bisection },
+        { id: 'fixedPoint', name: 'Punto Fijo', run: fixedPoint },
+        { id: 'aitken', name: 'Aitken', run: aitken },
+        { id: 'newton', name: 'Newton-Raphson', run: newtonRaphson },
+        { id: 'secant', name: 'Secante', run: secant },
+        { id: 'regulaFalsi', name: 'Regula Falsi', run: regulaFalsi },
+      ];
+    } else if (comparisonCategory === 'integration') {
+      methodsToRun = [
+        { id: 'trapezoidal', name: 'Trapecio', run: trapezoidal },
+        { id: 'simpson13', name: 'Simpson 1/3', run: simpson13 },
+        { id: 'simpson38', name: 'Simpson 3/8', run: simpson38 },
+        { id: 'midpoint', name: 'Rectángulos (Medio)', run: midpoint },
+        { id: 'montecarlo', name: 'Monte Carlo (1D)', run: monteCarlo, customParams: { dimensions: 1, monteCarloMode: 'integration' } },
+      ];
+    } else if (comparisonCategory === 'ode') {
+      methodsToRun = [
+        { id: 'ode', name: 'Euler', run: solveODE, customParams: { odeMethod: 'euler' } },
+        { id: 'ode', name: 'Euler Modificado', run: solveODE, customParams: { odeMethod: 'euler_modificado' } },
+        { id: 'ode', name: 'Runge-Kutta (Orden 1)', run: solveODE, customParams: { odeMethod: 'rk', rkOrder: 1 } },
+        { id: 'ode', name: 'Runge-Kutta (Orden 2)', run: solveODE, customParams: { odeMethod: 'rk', rkOrder: 2 } },
+        { id: 'ode', name: 'Runge-Kutta (Orden 3)', run: solveODE, customParams: { odeMethod: 'rk', rkOrder: 3 } },
+        { id: 'ode', name: 'Runge-Kutta (Orden 4)', run: solveODE, customParams: { odeMethod: 'rk', rkOrder: 4 } },
+      ];
+    }
+
+    const results = methodsToRun.map(m => {
+      const p = { ...params, ...m.customParams };
       return {
         id: m.id,
         name: m.name,
@@ -289,8 +296,7 @@ export default function App() {
         case 'simpson13': result = simpson13(currentParams); break;
         case 'simpson38': result = simpson38(currentParams); break;
         case 'midpoint': result = midpoint(currentParams); break;
-        case 'euler': result = euler(currentParams); break;
-        case 'rk4': result = rungeKutta4(currentParams); break;
+        case 'ode': result = solveODE(currentParams); break;
         case 'montecarlo': result = monteCarlo(currentParams); break;
         default: setLoading(false); return;
       }
@@ -580,11 +586,79 @@ export default function App() {
                         </div>
                       )}
 
+                    {currentAlgoConfig?.fields.includes('odeMethod') && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Método de Resolución</label>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleFieldChange('odeMethod', 'euler')}
+                            className={clsx(
+                              "flex-1 px-4 py-2 rounded-xl border transition-all text-[10px] font-bold uppercase",
+                              params.odeMethod === 'euler' ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-200" : "bg-gray-50 text-gray-500 border-black/5 hover:bg-gray-100"
+                            )}
+                          >
+                            Euler
+                          </button>
+                          <button 
+                            onClick={() => handleFieldChange('odeMethod', 'euler_modificado')}
+                            className={clsx(
+                              "flex-1 px-4 py-2 rounded-xl border transition-all text-[10px] font-bold uppercase",
+                              params.odeMethod === 'euler_modificado' ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-200" : "bg-gray-50 text-gray-500 border-black/5 hover:bg-gray-100"
+                            )}
+                          >
+                            Euler Modif
+                          </button>
+                          <button 
+                            onClick={() => handleFieldChange('odeMethod', 'rk')}
+                            className={clsx(
+                              "flex-1 px-4 py-2 rounded-xl border transition-all text-[10px] font-bold uppercase",
+                              params.odeMethod === 'rk' ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-200" : "bg-gray-50 text-gray-500 border-black/5 hover:bg-gray-100"
+                            )}
+                          >
+                            Runge-Kutta
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {currentAlgoConfig?.fields.includes('rkOrder') && params.odeMethod === 'rk' && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Orden de Runge-Kutta</label>
+                        <div className="flex gap-2">
+                          {[1, 2, 3, 4].map((order) => (
+                            <button 
+                              key={order}
+                              onClick={() => handleFieldChange('rkOrder', order)}
+                              className={clsx(
+                                "flex-1 px-4 py-2 rounded-xl border transition-all text-xs font-medium",
+                                params.rkOrder === order ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-200" : "bg-gray-50 text-gray-500 border-black/5 hover:bg-gray-100"
+                              )}
+                            >
+                              Orden {order}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {currentAlgoConfig?.fields.includes('exactFormula') && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Curva Real / Solución Exacta (Opcional)</label>
+                        <input 
+                          type="text" 
+                          value={params.exactFormula || ''}
+                          onFocus={() => setLastFocusedInput('exactFormula')}
+                          onChange={(e) => handleFieldChange('exactFormula', e.target.value)}
+                          className="w-full px-4 py-2 bg-gray-50 border border-black/5 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-mono"
+                          placeholder="e.g. exp(t)"
+                        />
+                      </div>
+                    )}
                     {currentAlgoConfig?.fields.includes('formula') && (activeAlgo !== 'montecarlo' || params.monteCarloMode === 'integration') && (
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                            {['euler', 'rk4'].includes(activeAlgo) ? 'EDO dy/dt = f(t, y)' : 'Función f(x)'}
+                            {['ode'].includes(activeAlgo) ? 'EDO dy/dt = f(t, y)' : 'Función f(x)'}
                           </label>
                           {activeAlgo === 'lagrange' && (
                             <div className="flex items-center gap-2">
@@ -613,7 +687,7 @@ export default function App() {
                                   onFocus={() => setLastFocusedInput('formula')}
                                   onChange={(e) => handleFieldChange('formula', e.target.value)}
                                   className="flex-1 px-4 py-2 bg-gray-50 border border-black/5 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-mono"
-                                  placeholder={['euler', 'rk4'].includes(activeAlgo) ? 'y + t^2' : 'x^2 - 2'}
+                                  placeholder={['ode'].includes(activeAlgo) ? 'y + t^2' : 'x^2 - 2'}
                                 />
                                 <button
                                   onClick={() => setShowFunctionHelper(!showFunctionHelper)}
@@ -1254,6 +1328,7 @@ export default function App() {
                     </h3>
                     <AlgorithmChart 
                       formula={params.formula} 
+                      exactFormula={activeAlgo === 'ode' ? params.exactFormula : undefined}
                       g_formula={['fixedPoint', 'aitken'].includes(activeAlgo || '') ? params.g_formula : undefined}
                       derivativeFormula={activeAlgo === 'newton' ? output?.derivativeFormula : undefined}
                       showYEqualsX={['fixedPoint', 'aitken'].includes(activeAlgo || '')}
@@ -1635,7 +1710,73 @@ export default function App() {
                     </div>
                   )}
 
-                  {activeAlgo !== 'aitken' && activeAlgo !== 'newton' && activeAlgo !== 'lagrange' && output && output.iterations.length > 0 && (
+                  {activeAlgo === 'ode' && output && output.iterations.length > 0 && (
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Tabla de Resultados EDO</h3>
+                      <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-gray-50 border-b border-black/5">
+                              <tr>
+                                <th className="px-6 py-4 font-semibold text-gray-600">N</th>
+                                <th className="px-6 py-4 font-semibold text-gray-600">X_n (t)</th>
+                                <th className="px-6 py-4 font-semibold text-gray-600">Y_n</th>
+                                {params.odeMethod === 'euler' && <th className="px-6 py-4 font-semibold text-gray-600">f(t, y)</th>}
+                                {params.odeMethod === 'euler_modificado' && (
+                                  <>
+                                    <th className="px-6 py-4 font-semibold text-gray-600">f(t_n, y_n)</th>
+                                    <th className="px-6 py-4 font-semibold text-gray-600">Y_pred</th>
+                                    <th className="px-6 py-4 font-semibold text-gray-600">f(t_n+1, Y_pred)</th>
+                                  </>
+                                )}
+                                {params.odeMethod === 'rk' && (params.rkOrder === 1 || params.rkOrder === 2 || params.rkOrder === 3 || params.rkOrder === 4) && <th className="px-6 py-4 font-semibold text-gray-600">k1</th>}
+                                {params.odeMethod === 'rk' && (params.rkOrder === 2 || params.rkOrder === 3 || params.rkOrder === 4) && <th className="px-6 py-4 font-semibold text-gray-600">k2</th>}
+                                {params.odeMethod === 'rk' && (params.rkOrder === 3 || params.rkOrder === 4) && <th className="px-6 py-4 font-semibold text-gray-600">k3</th>}
+                                {params.odeMethod === 'rk' && params.rkOrder === 4 && <th className="px-6 py-4 font-semibold text-gray-600">k4</th>}
+                                <th className="px-6 py-4 font-semibold text-gray-600">Y_n+1</th>
+                                {params.exactFormula && (
+                                  <>
+                                    <th className="px-6 py-4 font-semibold text-gray-600">Y_real</th>
+                                    <th className="px-6 py-4 font-semibold text-gray-600">Error</th>
+                                  </>
+                                )}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-black/5">
+                              {output.iterations.map((it, i) => (
+                                <tr key={i} className="hover:bg-gray-50/50 transition-colors">
+                                  <td className="px-6 py-4 font-mono text-gray-500">{it.iteration}</td>
+                                  <td className="px-6 py-4 font-mono font-medium">{formatDisplayValue(it.x)}</td>
+                                  <td className="px-6 py-4 font-mono text-gray-500">{formatDisplayValue(it.f_x)}</td>
+                                  {params.odeMethod === 'euler' && <td className="px-6 py-4 font-mono text-gray-500">{formatDisplayValue(it.fty)}</td>}
+                                  {params.odeMethod === 'euler_modificado' && (
+                                    <>
+                                      <td className="px-6 py-4 font-mono text-gray-500">{formatDisplayValue(it.fty1)}</td>
+                                      <td className="px-6 py-4 font-mono text-amber-600">{formatDisplayValue(it.y_pred)}</td>
+                                      <td className="px-6 py-4 font-mono text-gray-500">{formatDisplayValue(it.fty2)}</td>
+                                    </>
+                                  )}
+                                  {params.odeMethod === 'rk' && (params.rkOrder === 1 || params.rkOrder === 2 || params.rkOrder === 3 || params.rkOrder === 4) && <td className="px-6 py-4 font-mono text-gray-500">{formatDisplayValue(it.k1)}</td>}
+                                  {params.odeMethod === 'rk' && (params.rkOrder === 2 || params.rkOrder === 3 || params.rkOrder === 4) && <td className="px-6 py-4 font-mono text-gray-500">{formatDisplayValue(it.k2)}</td>}
+                                  {params.odeMethod === 'rk' && (params.rkOrder === 3 || params.rkOrder === 4) && <td className="px-6 py-4 font-mono text-gray-500">{formatDisplayValue(it.k3)}</td>}
+                                  {params.odeMethod === 'rk' && params.rkOrder === 4 && <td className="px-6 py-4 font-mono text-gray-500">{formatDisplayValue(it.k4)}</td>}
+                                  <td className="px-6 py-4 font-mono font-bold text-emerald-600">{formatDisplayValue(it.y_next)}</td>
+                                  {params.exactFormula && (
+                                    <>
+                                      <td className="px-6 py-4 font-mono text-blue-600">{formatDisplayValue(it.y_real)}</td>
+                                      <td className="px-6 py-4 font-mono text-red-500">{formatErrorValue(it.error)}</td>
+                                    </>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeAlgo !== 'aitken' && activeAlgo !== 'newton' && activeAlgo !== 'lagrange' && activeAlgo !== 'ode' && output && output.iterations.length > 0 && (
                     <div className="space-y-4">
                       <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Tabla de Resultados</h3>
                       <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
@@ -1907,9 +2048,31 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 bg-gray-50 p-6 rounded-2xl border border-black/5">
+              <div className="flex gap-2 p-1 bg-gray-100 rounded-xl">
+                {[
+                  { id: 'roots', label: 'Raíces' },
+                  { id: 'integration', label: 'Integración' },
+                  { id: 'ode', label: 'Ecuaciones Diferenciales' }
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => {
+                      setComparisonCategory(cat.id as any);
+                      setComparisonResults([]);
+                    }}
+                    className={clsx(
+                      "flex-1 py-2 px-4 rounded-lg text-sm font-bold transition-all",
+                      comparisonCategory === cat.id ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:bg-gray-200"
+                    )}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 bg-gray-50 p-6 rounded-2xl border border-black/5">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Fórmula f(x)</label>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Fórmula {comparisonCategory === 'ode' ? 'f(t, y)' : 'f(x)'}</label>
                   <input 
                     type="text" 
                     value={params.formula}
@@ -1917,74 +2080,163 @@ export default function App() {
                     className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none font-mono text-sm"
                   />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Intervalo [a, b]</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="number" 
-                      value={isNaN(params.a as number) ? '' : params.a}
-                      onChange={(e) => handleFieldChange('a', parseFloat(e.target.value))}
-                      className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
-                      placeholder="a"
-                    />
-                    <input 
-                      type="number" 
-                      value={isNaN(params.b as number) ? '' : params.b}
-                      onChange={(e) => handleFieldChange('b', parseFloat(e.target.value))}
-                      className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
-                      placeholder="b"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Punto Inicial x0</label>
-                  <input 
-                    type="number" 
-                    value={isNaN(params.x0 as number) ? '' : params.x0}
-                    onChange={(e) => handleFieldChange('x0', parseFloat(e.target.value))}
-                    className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Función g(x)</label>
-                    <button 
-                      onClick={() => {
-                        const recs = recommendG(params.formula);
-                        handleFieldChange('g_formula', recs[0]);
-                      }}
-                      className="text-[9px] text-emerald-600 hover:underline"
-                    >
-                      Recomendar
-                    </button>
-                  </div>
-                  <input 
-                    type="text" 
-                    value={params.g_formula}
-                    onChange={(e) => handleFieldChange('g_formula', e.target.value)}
-                    className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm font-mono"
-                    placeholder="g(x)"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Tolerancia (10^-k)</label>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono text-gray-400">10^-</span>
-                    <input 
-                      type="number" 
-                      min="1"
-                      max="15"
-                      value={Math.round(-Math.log10(params.tolerance || 1e-5))}
-                      onChange={(e) => {
-                        const k = parseInt(e.target.value);
-                        if (!isNaN(k) && k >= 1) {
-                          handleFieldChange('tolerance', Math.pow(10, -k));
-                        }
-                      }}
-                      className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm font-mono"
-                    />
-                  </div>
-                </div>
+
+                {comparisonCategory === 'roots' && (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Intervalo [a, b]</label>
+                      <div className="flex gap-2">
+                        <input 
+                          type="number" 
+                          value={isNaN(params.a as number) ? '' : params.a}
+                          onChange={(e) => handleFieldChange('a', parseFloat(e.target.value))}
+                          className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                          placeholder="a"
+                        />
+                        <input 
+                          type="number" 
+                          value={isNaN(params.b as number) ? '' : params.b}
+                          onChange={(e) => handleFieldChange('b', parseFloat(e.target.value))}
+                          className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                          placeholder="b"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Punto Inicial x0</label>
+                      <input 
+                        type="number" 
+                        value={isNaN(params.x0 as number) ? '' : params.x0}
+                        onChange={(e) => handleFieldChange('x0', parseFloat(e.target.value))}
+                        className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Función g(x)</label>
+                        <button 
+                          onClick={() => {
+                            const recs = recommendG(params.formula);
+                            handleFieldChange('g_formula', recs[0]);
+                          }}
+                          className="text-[9px] text-emerald-600 hover:underline"
+                        >
+                          Recomendar
+                        </button>
+                      </div>
+                      <input 
+                        type="text" 
+                        value={params.g_formula}
+                        onChange={(e) => handleFieldChange('g_formula', e.target.value)}
+                        className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm font-mono"
+                        placeholder="g(x)"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Tolerancia (10^-k)</label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-gray-400">10^-</span>
+                        <input 
+                          type="number" 
+                          min="1"
+                          max="15"
+                          value={Math.round(-Math.log10(params.tolerance || 1e-5))}
+                          onChange={(e) => {
+                            const k = parseInt(e.target.value);
+                            if (!isNaN(k) && k >= 1) {
+                              handleFieldChange('tolerance', Math.pow(10, -k));
+                            }
+                          }}
+                          className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm font-mono"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {comparisonCategory === 'integration' && (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Intervalo [a, b]</label>
+                      <div className="flex gap-2">
+                        <input 
+                          type="number" 
+                          value={isNaN(params.a as number) ? '' : params.a}
+                          onChange={(e) => handleFieldChange('a', parseFloat(e.target.value))}
+                          className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                          placeholder="a"
+                        />
+                        <input 
+                          type="number" 
+                          value={isNaN(params.b as number) ? '' : params.b}
+                          onChange={(e) => handleFieldChange('b', parseFloat(e.target.value))}
+                          className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                          placeholder="b"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Subintervalos (n)</label>
+                      <input 
+                        type="number" 
+                        value={isNaN(params.n as number) ? '' : params.n}
+                        onChange={(e) => handleFieldChange('n', parseInt(e.target.value))}
+                        className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {comparisonCategory === 'ode' && (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">t0</label>
+                      <input 
+                        type="number" 
+                        value={isNaN(params.t0 as number) ? '' : params.t0}
+                        onChange={(e) => handleFieldChange('t0', parseFloat(e.target.value))}
+                        className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">y0</label>
+                      <input 
+                        type="number" 
+                        value={isNaN(params.y0 as number) ? '' : params.y0}
+                        onChange={(e) => handleFieldChange('y0', parseFloat(e.target.value))}
+                        className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">t final</label>
+                      <input 
+                        type="number" 
+                        value={isNaN(params.t_end as number) ? '' : params.t_end}
+                        onChange={(e) => handleFieldChange('t_end', parseFloat(e.target.value))}
+                        className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Paso (h)</label>
+                      <input 
+                        type="number" 
+                        value={isNaN(params.h as number) ? '' : params.h}
+                        onChange={(e) => handleFieldChange('h', parseFloat(e.target.value))}
+                        className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Solución Exacta (Opcional)</label>
+                      <input 
+                        type="text" 
+                        value={params.exactFormula || ''}
+                        onChange={(e) => handleFieldChange('exactFormula', e.target.value)}
+                        className="w-full px-4 py-2 bg-white border border-black/5 rounded-xl text-sm font-mono"
+                        placeholder="e.g. exp(t)"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
 
               <button 
@@ -2001,40 +2253,82 @@ export default function App() {
                       <tr>
                         <th className="px-6 py-4 font-semibold text-gray-600">Método</th>
                         <th className="px-6 py-4 font-semibold text-gray-600">Estado</th>
-                        <th className="px-6 py-4 font-semibold text-gray-600">Resultado / Raíz</th>
-                        <th className="px-6 py-4 font-semibold text-gray-600">Iter / Pasos</th>
-                        <th className="px-6 py-4 font-semibold text-gray-600">Error Final</th>
+                        <th className="px-6 py-4 font-semibold text-gray-600">
+                          {comparisonCategory === 'roots' ? 'Raíz' : comparisonCategory === 'integration' ? 'Resultado' : 'Y final'}
+                        </th>
+                        <th className="px-6 py-4 font-semibold text-gray-600">
+                          {comparisonCategory === 'roots' ? 'Iteraciones' : comparisonCategory === 'integration' ? 'Subintervalos/Muestras' : 'Pasos'}
+                        </th>
+                        <th className="px-6 py-4 font-semibold text-gray-600">
+                          {comparisonCategory === 'ode' && !params.exactFormula ? '-' : 'Error Final'}
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-black/5">
-                      {comparisonResults.map((res, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                          <td 
-                            className="px-6 py-4 font-bold text-gray-700 cursor-pointer hover:text-emerald-600 transition-colors flex items-center gap-2"
-                            onClick={() => {
-                              setFromComparison(true);
-                              setActiveAlgo(res.id);
-                              setShowComparison(false);
-                            }}
-                          >
-                            {res.name} <ChevronRight size={14} className="text-gray-300" />
-                          </td>
-                          <td className="px-6 py-4">
-                            {res.converged ? (
-                              <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full uppercase">Convergente</span>
-                            ) : (
-                              <span className="px-2 py-1 bg-red-100 text-red-700 text-[10px] font-bold rounded-full uppercase">Divergente / Error</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 font-mono">
-                            {res.result ? res.result : (res.root !== null && !isNaN(res.root) ? res.root.toFixed(8) : '-')}
-                          </td>
-                          <td className="px-6 py-4 font-mono">{res.iterations.length}</td>
-                          <td className="px-6 py-4 font-mono text-emerald-600">
-                            {res.iterations.length > 0 && typeof res.iterations[res.iterations.length - 1].error === 'number' ? res.iterations[res.iterations.length - 1].error.toFixed(8) : '-'}
-                          </td>
-                        </tr>
-                      ))}
+                      {comparisonResults.map((res, idx) => {
+                        let resultValue: string | number = '-';
+                        if (comparisonCategory === 'roots' && res.root !== null && res.root !== undefined && !isNaN(res.root)) {
+                          resultValue = Number(res.root).toFixed(8);
+                        } else if (comparisonCategory === 'integration' && res.result !== null && res.result !== undefined) {
+                          resultValue = typeof res.result === 'number' ? res.result.toFixed(8) : res.result;
+                        } else if (comparisonCategory === 'ode' && res.iterations.length > 0) {
+                          resultValue = Number(res.iterations[res.iterations.length - 1].f_x).toFixed(8);
+                        }
+
+                        let errorValue: string | number = '-';
+                        if (res.iterations.length > 0) {
+                          const lastIter = res.iterations[res.iterations.length - 1];
+                          if (comparisonCategory === 'ode') {
+                            if (params.exactFormula && lastIter.error !== undefined && !isNaN(lastIter.error)) {
+                              errorValue = Number(lastIter.error).toExponential(4);
+                            }
+                          } else if (typeof lastIter.error === 'number') {
+                            errorValue = Number(lastIter.error).toExponential(4);
+                          }
+                        }
+                        if (comparisonCategory === 'integration' && res.errorAnalysis?.globalError) {
+                          errorValue = Number(res.errorAnalysis.globalError).toExponential(4);
+                        }
+
+                        return (
+                          <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                            <td 
+                              className="px-6 py-4 font-bold text-gray-700 cursor-pointer hover:text-emerald-600 transition-colors flex items-center gap-2"
+                              onClick={() => {
+                                setFromComparison(true);
+                                setActiveAlgo(res.id);
+                                if (comparisonCategory === 'ode') {
+                                  // For ODE, we need to set the specific method and order
+                                  const isEuler = res.name === 'Euler';
+                                  const isEulerMod = res.name === 'Euler Modificado';
+                                  handleFieldChange('odeMethod', isEuler ? 'euler' : isEulerMod ? 'euler_modificado' : 'rk');
+                                  if (!isEuler && !isEulerMod) {
+                                    const orderMatch = res.name.match(/Orden (\d)/);
+                                    if (orderMatch) handleFieldChange('rkOrder', parseInt(orderMatch[1]));
+                                  }
+                                }
+                                setShowComparison(false);
+                              }}
+                            >
+                              {res.name} <ChevronRight size={14} className="text-gray-300" />
+                            </td>
+                            <td className="px-6 py-4">
+                              {res.converged ? (
+                                <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full uppercase">Convergente</span>
+                              ) : (
+                                <span className="px-2 py-1 bg-red-100 text-red-700 text-[10px] font-bold rounded-full uppercase">Divergente / Error</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 font-mono">
+                              {resultValue}
+                            </td>
+                            <td className="px-6 py-4 font-mono">{res.iterations.length}</td>
+                            <td className="px-6 py-4 font-mono text-emerald-600">
+                              {errorValue}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

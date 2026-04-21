@@ -42,6 +42,9 @@ export interface AlgorithmParams {
   d?: number | string;
   e_limit?: number | string;
   f_limit?: number | string;
+  exactFormula?: string;
+  odeMethod?: 'euler' | 'euler_modificado' | 'rk';
+  rkOrder?: 1 | 2 | 3 | 4;
 }
 
 export interface AlgorithmOutput {

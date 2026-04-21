@@ -1004,8 +1004,8 @@ export const midpoint = (params: AlgorithmParams): AlgorithmOutput => {
   };
 };
 
-export const euler = (params: AlgorithmParams): AlgorithmOutput => {
-  const { formula, t0: rawT0, y0: rawY0, t_end: rawTEnd, h: rawH, useFunction } = params;
+export const solveODE = (params: AlgorithmParams): AlgorithmOutput => {
+  const { formula, exactFormula, odeMethod = 'euler', rkOrder = 4, t0: rawT0, y0: rawY0, t_end: rawTEnd, h: rawH } = params;
   const t0 = parseParam(rawT0);
   const y0 = parseParam(rawY0);
   const t_end = parseParam(rawTEnd);
@@ -1014,63 +1014,114 @@ export const euler = (params: AlgorithmParams): AlgorithmOutput => {
     return { iterations: [], converged: false, errorMsg: 't0, y0, t_end y h son requeridos y deben ser válidos' };
 
   const iterations = [];
+  const points: Point[] = [];
   let t = t0;
   let y = y0;
   let i = 0;
 
   while (t <= t_end + h / 2) {
-    iterations.push({ iteration: i, x: t, f_x: y, error: 0 });
-    const fty = evaluate(formula, { t, y });
-    if (isNaN(fty)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
-    y = y + h * fty;
+    let y_real: number | undefined = undefined;
+    let error: number | undefined = undefined;
+
+    if (exactFormula) {
+      try {
+        y_real = evaluate(exactFormula, { t, x: t });
+        if (!isNaN(y_real)) {
+          error = Math.abs(y - y_real);
+        }
+      } catch (e) {}
+    }
+
+    let next_y = y;
+    let iterData: any = {
+      iteration: i,
+      x: t,
+      f_x: y,
+      y_real,
+    };
+    if (error !== undefined) {
+      iterData.error = error;
+    }
+
+    if (odeMethod === 'euler') {
+      const fty = evaluate(formula, { t, y });
+      if (isNaN(fty)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+      next_y = y + h * fty;
+      iterData.fty = fty;
+    } else if (odeMethod === 'euler_modificado') {
+      // Predictor
+      const fty1 = evaluate(formula, { t, y });
+      if (isNaN(fty1)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+      const y_pred = y + h * fty1;
+      
+      // Corrector
+      const fty2 = evaluate(formula, { t: t + h, y: y_pred });
+      if (isNaN(fty2)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+      
+      next_y = y + (h / 2) * (fty1 + fty2);
+      
+      iterData.fty1 = fty1;
+      iterData.y_pred = y_pred;
+      iterData.fty2 = fty2;
+    } else {
+      const k1_val = evaluate(formula, { t, y });
+      if (isNaN(k1_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+      const k1 = h * k1_val;
+      iterData.k1 = k1;
+
+      if (rkOrder === 1) {
+        next_y = y + k1;
+      } else if (rkOrder === 2) {
+        const k2_val = evaluate(formula, { t: t + h / 2, y: y + k1 / 2 });
+        if (isNaN(k2_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+        const k2 = h * k2_val;
+        iterData.k2 = k2;
+        next_y = y + k2;
+      } else if (rkOrder === 3) {
+        const k2_val = evaluate(formula, { t: t + h / 2, y: y + k1 / 2 });
+        if (isNaN(k2_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+        const k2 = h * k2_val;
+        iterData.k2 = k2;
+
+        const k3_val = evaluate(formula, { t: t + h, y: y - k1 + 2 * k2 });
+        if (isNaN(k3_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+        const k3 = h * k3_val;
+        iterData.k3 = k3;
+
+        next_y = y + (k1 + 4 * k2 + k3) / 6;
+      } else {
+        const k2_val = evaluate(formula, { t: t + h / 2, y: y + k1 / 2 });
+        if (isNaN(k2_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+        const k2 = h * k2_val;
+        iterData.k2 = k2;
+
+        const k3_val = evaluate(formula, { t: t + h / 2, y: y + k2 / 2 });
+        if (isNaN(k3_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+        const k3 = h * k3_val;
+        iterData.k3 = k3;
+
+        const k4_val = evaluate(formula, { t: t + h, y: y + k3 });
+        if (isNaN(k4_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
+        const k4 = h * k4_val;
+        iterData.k4 = k4;
+
+        next_y = y + (k1 + 2 * k2 + 2 * k3 + k4) / 6;
+      }
+    }
+
+    iterData.y_next = next_y;
+    iterations.push(iterData);
+    
+    points.push({ x: t, y });
+
+    y = next_y;
     t = t + h;
     i++;
     if (i > 1000) break; // Safety
   }
 
-  return { result: 'Euler calculado', iterations, converged: true };
-};
-
-export const rungeKutta4 = (params: AlgorithmParams): AlgorithmOutput => {
-  const { formula, t0: rawT0, y0: rawY0, t_end: rawTEnd, h: rawH, useFunction } = params;
-  const t0 = parseParam(rawT0);
-  const y0 = parseParam(rawY0);
-  const t_end = parseParam(rawTEnd);
-  const h = parseParam(rawH);
-  if (isNaN(t0) || isNaN(y0) || isNaN(t_end) || isNaN(h)) 
-    return { iterations: [], converged: false, errorMsg: 't0, y0, t_end y h son requeridos y deben ser válidos' };
-
-  const iterations = [];
-  let t = t0;
-  let y = y0;
-  let i = 0;
-
-  while (t <= t_end + h / 2) {
-    iterations.push({ iteration: i, x: t, f_x: y, error: 0 });
-    
-    const k1_val = evaluate(formula, { t, y });
-    if (isNaN(k1_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
-    const k1 = h * k1_val;
-
-    const k2_val = evaluate(formula, { t: t + h / 2, y: y + k1 / 2 });
-    if (isNaN(k2_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
-    const k2 = h * k2_val;
-
-    const k3_val = evaluate(formula, { t: t + h / 2, y: y + k2 / 2 });
-    if (isNaN(k3_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
-    const k3 = h * k3_val;
-
-    const k4_val = evaluate(formula, { t: t + h, y: y + k3 });
-    if (isNaN(k4_val)) return { result: 'Error', iterations, converged: false, errorMsg: 'Fórmula inválida o incompleta' };
-    const k4 = h * k4_val;
-
-    y = y + (k1 + 2 * k2 + 2 * k3 + k4) / 6;
-    t = t + h;
-    i++;
-    if (i > 1000) break;
-  }
-
-  return { result: 'RK4 calculado', iterations, converged: true };
+  const methodName = odeMethod === 'euler' ? 'Euler' : `RK${rkOrder}`;
+  return { result: `${methodName} calculado`, iterations, points, converged: true };
 };
 
 export const monteCarlo = (params: AlgorithmParams): AlgorithmOutput => {

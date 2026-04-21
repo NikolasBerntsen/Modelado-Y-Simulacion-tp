@@ -30,6 +30,7 @@ interface ChartProps {
   points?: Point[];
   monteCarloMode?: 'pi' | 'integration';
   dimensions?: 1 | 2 | 3;
+  exactFormula?: string;
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -65,10 +66,23 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, derivativeFormula, showYEqualsX, iterations, range, points: resultPoints, monteCarloMode, dimensions }) => {
+export const AlgorithmChart: React.FC<ChartProps> = ({ formula, exactFormula, g_formula, derivativeFormula, showYEqualsX, iterations, range, points: resultPoints, monteCarloMode, dimensions }) => {
   const [domainX, setDomainX] = React.useState<[number | string, number | string]>(['auto', 'auto']);
   const [refAreaLeft, setRefAreaLeft] = React.useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = React.useState<number | null>(null);
+  const [hiddenSeries, setHiddenSeries] = React.useState<Record<string, boolean>>({});
+
+  const handleLegendClick = (e: any) => {
+    // Determine the name to toggle. Some series use `dataKey` while others explicitly set `name`
+    // Prefer `value` from legend payload which corresponds to the displayed name, or fallback to dataKey
+    const seriesName = e.value || e.dataKey;
+    if (seriesName) {
+      setHiddenSeries(prev => ({
+        ...prev,
+        [seriesName]: !prev[seriesName]
+      }));
+    }
+  };
 
   const data = React.useMemo(() => {
     if (resultPoints && resultPoints.length > 0) {
@@ -120,6 +134,16 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
           }
         } catch (e) {}
       }
+
+      if (exactFormula) {
+        try {
+          const y_real = evaluate(exactFormula, { t: x, x: x });
+          if (typeof y_real === 'number' && isFinite(y_real)) {
+            point.y_real = Number(y_real.toFixed(6));
+            hasValue = true;
+          }
+        } catch (e) {}
+      }
       
       if (g_formula) {
         try {
@@ -151,13 +175,13 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
       }
     }
     return points;
-  }, [formula, g_formula, derivativeFormula, showYEqualsX, iterations, resultPoints]);
+  }, [formula, exactFormula, g_formula, derivativeFormula, showYEqualsX, iterations, resultPoints]);
 
   const iterationPoints = React.useMemo(() => iterations
     .filter(it => typeof it.x === 'number' && !isNaN(it.x) && typeof it.f_x === 'number' && !isNaN(it.f_x))
     .map(it => ({
       x: Number(it.x.toFixed(6)),
-      y: Number(it.f_x.toFixed(6)),
+      iter_y: Number(it.f_x.toFixed(6)),
       iteration: it.iteration
     })), [iterations]);
 
@@ -205,6 +229,14 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
           <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Visualización Monte Carlo</h4>
           <p className="text-xs text-gray-500">Círculo inscrito en cuadrado 1x1</p>
         </div>
+        <div className="absolute top-6 right-6 flex items-center gap-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1 bg-white/80 backdrop-blur-md border border-black/5 p-1 rounded-lg shadow-sm">
+            <div className="flex items-center gap-1 px-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+              <MousePointer2 size={12} />
+              Clic en leyenda para ocultar
+            </div>
+          </div>
+        </div>
         <div className="w-full h-full flex items-center justify-center">
           <div className="aspect-square h-full max-w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -214,12 +246,17 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
                 <YAxis type="number" dataKey="y" name="y" domain={[0, 1]} tick={{ fontSize: 10 }} />
                 <ZAxis type="number" range={[20, 20]} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                <Legend verticalAlign="top" height={36} />
+                <Legend 
+                  verticalAlign="top" 
+                  height={36} 
+                  wrapperStyle={{ cursor: 'pointer' }}
+                  onClick={handleLegendClick}
+                />
                 
                 <ReferenceArea x1={0} x2={1} y1={0} y2={1} stroke="#000" strokeOpacity={0.1} fill="transparent" />
                 
-                <Scatter name="Fallidos" data={outsidePoints} fill="#ef4444" opacity={0.6} />
-                <Scatter name="Éxitos" data={insidePoints} fill="#10b981" />
+                <Scatter name="Fallidos" data={outsidePoints} fill="#ef4444" opacity={0.6} hide={hiddenSeries['Fallidos']} />
+                <Scatter name="Éxitos" data={insidePoints} fill="#10b981" hide={hiddenSeries['Éxitos']} />
               </ScatterChart>
             </ResponsiveContainer>
           </div>
@@ -235,19 +272,77 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
           <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Integración Monte Carlo</h4>
           <p className="text-xs text-gray-500">Método del Promedio ({dimensions || 1}D)</p>
         </div>
+        <div className="absolute top-6 right-6 flex items-center gap-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1 bg-white/80 backdrop-blur-md border border-black/5 p-1 rounded-lg shadow-sm">
+            <button 
+              onClick={handleReset}
+              className="p-1.5 hover:bg-black/5 rounded-md text-gray-500 transition-colors"
+              title="Restablecer Zoom"
+            >
+              <RefreshCcw size={16} />
+            </button>
+            <div className="w-px h-4 bg-black/5 mx-1" />
+            <div className="flex items-center gap-1 px-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+              <Search size={12} />
+              Selecciona área para zoom
+            </div>
+            <div className="w-px h-4 bg-black/5 mx-1" />
+            <div className="flex items-center gap-1 px-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+              <MousePointer2 size={12} />
+              Clic en leyenda para ocultar
+            </div>
+          </div>
+        </div>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 40, right: 40, bottom: 40, left: 40 }}>
+          <ComposedChart 
+            data={data} 
+            margin={{ top: 40, right: 40, bottom: 40, left: 40 }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis type="number" dataKey="x" name="x" domain={['auto', 'auto']} tick={{ fontSize: 10 }} />
+            <XAxis type="number" dataKey="x" name="x" domain={domainX} tick={{ fontSize: 10 }} allowDataOverflow />
             <YAxis type="number" dataKey="y" name="y" domain={['auto', 'auto']} tick={{ fontSize: 10 }} />
             <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-            <Legend verticalAlign="top" height={36} />
+            <Legend 
+              verticalAlign="top" 
+              height={36} 
+              wrapperStyle={{ cursor: 'pointer' }}
+              onClick={handleLegendClick}
+            />
             
             {(dimensions || 1) === 1 && (
-              <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={2} dot={false} name="f(x)" />
+              <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={2} dot={false} name="f(x)" hide={hiddenSeries['f(x)']} />
             )}
             
-            <Scatter name="Muestras" data={resultPoints} fill="#10b981" opacity={0.6} />
+            <Scatter name="Muestras" data={resultPoints} fill="#10b981" opacity={0.6} hide={hiddenSeries['Muestras']} />
+
+            {refAreaLeft && refAreaRight ? (
+              <ReferenceArea 
+                {...({ 
+                  x1: refAreaLeft, 
+                  x2: refAreaRight, 
+                  fill: "#10b981", 
+                  fillOpacity: 0.1 
+                } as any)} 
+              />
+            ) : null}
+
+            <Brush 
+              dataKey="x" 
+              height={30} 
+              stroke="#94a3b8" 
+              fill="#fff"
+              travellerWidth={10}
+              gap={1}
+              startIndex={0}
+              endIndex={data.length - 1}
+            >
+              <ComposedChart>
+                <Line data={data} dataKey="y" stroke="#10b981" dot={false} />
+              </ComposedChart>
+            </Brush>
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -269,6 +364,11 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
           <div className="flex items-center gap-1 px-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
             <Search size={12} />
             Selecciona área para zoom
+          </div>
+          <div className="w-px h-4 bg-black/5 mx-1" />
+          <div className="flex items-center gap-1 px-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+            <MousePointer2 size={12} />
+            Clic en leyenda para ocultar
           </div>
         </div>
       </div>
@@ -310,7 +410,8 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
             verticalAlign="top" 
             height={36} 
             iconType="circle"
-            wrapperStyle={{ fontSize: 12, fontWeight: 500, paddingTop: 0 }}
+            wrapperStyle={{ fontSize: 12, fontWeight: 500, paddingTop: 0, cursor: 'pointer' }}
+            onClick={handleLegendClick}
           />
           
           <ReferenceLine y={0} stroke="#000" strokeWidth={1} strokeOpacity={0.2} />
@@ -326,6 +427,7 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
             name={data.some(d => d.yOriginal !== undefined) ? "Polinomio P(x)" : "f(x)"}
             connectNulls
             animationDuration={300}
+            hide={hiddenSeries[data.some(d => d.yOriginal !== undefined) ? "Polinomio P(x)" : "f(x)"]}
           />
 
           {data.some(d => d.yOriginal !== undefined) && (
@@ -337,9 +439,26 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
               strokeDasharray="5 5"
               dot={false} 
               strokeWidth={2} 
-              name="Función f(x)"
+              name="Función F(x) Original"
               connectNulls
               animationDuration={300}
+              hide={hiddenSeries['Función F(x) Original']}
+            />
+          )}
+
+          {exactFormula && (
+            <Line 
+              data={data} 
+              type="monotone" 
+              dataKey="y_real" 
+              stroke="#8b5cf6" 
+              strokeDasharray="5 5"
+              dot={false} 
+              strokeWidth={2} 
+              name="Solución Exacta"
+              connectNulls
+              animationDuration={300}
+              hide={hiddenSeries['Solución Exacta']}
             />
           )}
 
@@ -354,6 +473,7 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
               name="g(x)"
               connectNulls
               animationDuration={300}
+              hide={hiddenSeries['g(x)']}
             />
           )}
 
@@ -369,6 +489,7 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
               name="f'(x)"
               connectNulls
               animationDuration={300}
+              hide={hiddenSeries["f'(x)"]}
             />
           )}
 
@@ -384,19 +505,21 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
               name="y = x"
               connectNulls
               animationDuration={300}
+              hide={hiddenSeries['y = x']}
             />
           )}
           
           {iterationPoints.length > 0 && (
             <Line 
               data={iterationPoints} 
-              dataKey="y" 
+              dataKey="iter_y" 
               stroke="#ef4444" 
               strokeWidth={0}
               dot={{ r: 5, fill: '#ef4444', strokeWidth: 2, stroke: '#fff' }}
               activeDot={{ r: 7, strokeWidth: 0 }}
               name="Iteraciones"
               animationDuration={300}
+              hide={hiddenSeries['Iteraciones']}
             />
           )}
 
@@ -414,7 +537,7 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, g_formula, deriv
           <Brush 
             dataKey="x" 
             height={30} 
-            stroke="#10b981" 
+            stroke="#94a3b8" 
             fill="#fff"
             travellerWidth={10}
             gap={1}
