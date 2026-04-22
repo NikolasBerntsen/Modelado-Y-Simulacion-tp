@@ -201,6 +201,10 @@ export default function App() {
     dimensions: 1,
     c: 0,
     d: 1,
+    yLowerFormula: '',
+    yUpperFormula: '',
+    curveBoundaryFunctions: ['x^2', 'sqrt(x)'],
+    selectedCurveRegionIndex: 'all',
     e_limit: 0,
     f_limit: 1,
     confidenceLevel: 95,
@@ -219,6 +223,8 @@ export default function App() {
   const [expandedAitkenRows, setExpandedAitkenRows] = useState<number[]>([]);
   const [expandedSecantRows, setExpandedSecantRows] = useState<number[]>([]);
   const [showFunctionHelper, setShowFunctionHelper] = useState(false);
+  const monteCarloWorkerRef = React.useRef<Worker | null>(null);
+  const monteCarloRequestIdRef = React.useRef(0);
   
   const { history, saveToHistory, clearHistory } = useHistory<AlgorithmParams & { algo: AlgorithmType }>(activeAlgo || 'global');
 
@@ -228,6 +234,50 @@ export default function App() {
       runAlgorithm();
     }
   }, [activeAlgo, fromComparison]);
+
+  React.useEffect(() => {
+    return () => {
+      monteCarloWorkerRef.current?.terminate();
+      monteCarloWorkerRef.current = null;
+    };
+  }, []);
+
+  const runMonteCarloInWorker = React.useCallback((workerParams: AlgorithmParams) => {
+    monteCarloWorkerRef.current?.terminate();
+
+    const worker = new Worker(new URL('./workers/monteCarloWorker.ts', import.meta.url), { type: 'module' });
+    monteCarloWorkerRef.current = worker;
+    monteCarloRequestIdRef.current += 1;
+    const requestId = monteCarloRequestIdRef.current;
+
+    return new Promise<AlgorithmOutput>((resolve, reject) => {
+      worker.onmessage = (event: MessageEvent<{ id: number; result?: AlgorithmOutput; error?: string }>) => {
+        if (event.data.id !== requestId) return;
+
+        worker.terminate();
+        if (monteCarloWorkerRef.current === worker) {
+          monteCarloWorkerRef.current = null;
+        }
+
+        if (event.data.error) {
+          reject(new Error(event.data.error));
+          return;
+        }
+
+        resolve(event.data.result || { iterations: [], converged: false, errorMsg: 'Monte Carlo no devolviÃ³ resultados.' });
+      };
+
+      worker.onerror = () => {
+        worker.terminate();
+        if (monteCarloWorkerRef.current === worker) {
+          monteCarloWorkerRef.current = null;
+        }
+        reject(new Error('No se pudo ejecutar Monte Carlo en segundo plano.'));
+      };
+
+      worker.postMessage({ id: requestId, params: workerParams });
+    });
+  }, []);
 
   const runComparison = () => {
     setExpandedAitkenRows([]);
@@ -281,28 +331,38 @@ export default function App() {
     setExpandedSecantRows([]);
     
     // Use setTimeout to allow UI to show loading state
-    setTimeout(() => {
-      let result: AlgorithmOutput;
+    setTimeout(async () => {
       const currentParams = { ...params, isTrigMode, useFunction: params.useFunction ?? true };
-      switch (activeAlgo) {
-        case 'bisection': result = bisection(currentParams); break;
-        case 'fixedPoint': result = fixedPoint(currentParams); break;
-        case 'aitken': result = aitken(currentParams); break;
-        case 'newton': result = newtonRaphson(currentParams); break;
-        case 'secant': result = secant(currentParams); break;
-        case 'regulaFalsi': result = regulaFalsi(currentParams); break;
-        case 'lagrange': result = lagrange(currentParams); break;
-        case 'trapezoidal': result = trapezoidal(currentParams); break;
-        case 'simpson13': result = simpson13(currentParams); break;
-        case 'simpson38': result = simpson38(currentParams); break;
-        case 'midpoint': result = midpoint(currentParams); break;
-        case 'ode': result = solveODE(currentParams); break;
-        case 'montecarlo': result = monteCarlo(currentParams); break;
-        default: setLoading(false); return;
+
+      try {
+        let result: AlgorithmOutput;
+        switch (activeAlgo) {
+          case 'bisection': result = bisection(currentParams); break;
+          case 'fixedPoint': result = fixedPoint(currentParams); break;
+          case 'aitken': result = aitken(currentParams); break;
+          case 'newton': result = newtonRaphson(currentParams); break;
+          case 'secant': result = secant(currentParams); break;
+          case 'regulaFalsi': result = regulaFalsi(currentParams); break;
+          case 'lagrange': result = lagrange(currentParams); break;
+          case 'trapezoidal': result = trapezoidal(currentParams); break;
+          case 'simpson13': result = simpson13(currentParams); break;
+          case 'simpson38': result = simpson38(currentParams); break;
+          case 'midpoint': result = midpoint(currentParams); break;
+          case 'ode': result = solveODE(currentParams); break;
+          case 'montecarlo': result = await runMonteCarloInWorker(currentParams); break;
+          default: setLoading(false); return;
+        }
+        setOutput(result);
+        saveToHistory({ ...currentParams, algo: activeAlgo! });
+      } catch (error) {
+        setOutput({
+          iterations: [],
+          converged: false,
+          errorMsg: error instanceof Error ? error.message : 'No se pudo ejecutar el algoritmo.'
+        });
+      } finally {
+        setLoading(false);
       }
-      setOutput(result);
-      saveToHistory({ ...currentParams, algo: activeAlgo! });
-      setLoading(false);
     }, 300);
   };
 
@@ -331,6 +391,20 @@ export default function App() {
 
   const removePoint = (index: number) => {
     setParams(prev => ({ ...prev, points: (prev.points || []).filter((_, i) => i !== index) }));
+  };
+
+  const handleCurveBoundaryChange = (index: number, value: string) => {
+    const nextCurves = [...(params.curveBoundaryFunctions || [])];
+    nextCurves[index] = value;
+    setParams((prev) => ({ ...prev, curveBoundaryFunctions: nextCurves, selectedCurveRegionIndex: 'all' }));
+  };
+
+  const addCurveBoundary = () => {
+    setParams((prev) => ({ ...prev, curveBoundaryFunctions: [...(prev.curveBoundaryFunctions || []), ''], selectedCurveRegionIndex: 'all' }));
+  };
+
+  const removeCurveBoundary = (index: number) => {
+    setParams((prev) => ({ ...prev, curveBoundaryFunctions: (prev.curveBoundaryFunctions || []).filter((_, i) => i !== index), selectedCurveRegionIndex: 'all' }));
   };
 
   const loadFromHistory = (item: AlgorithmParams) => {
@@ -405,6 +479,13 @@ export default function App() {
     const s = n.toFixed(12);
     return s.replace(/\.?0+$/, '');
   };
+
+  const convergenceData = useMemo(() => {
+    if (!output?.iterations) return [];
+    return output.iterations
+      .filter((it: any) => typeof it?.iteration === 'number' && typeof it?.estimate === 'number' && isFinite(it.estimate))
+      .map((it: any) => ({ iteration: it.iteration, estimate: it.estimate }));
+  }, [output]);
 
   return (
     <div className="min-h-screen bg-[#f5f5f4] text-[#1a1a1a] font-sans selection:bg-emerald-100">
@@ -561,6 +642,15 @@ export default function App() {
                             )}
                           >
                             Integración
+                          </button>
+                          <button 
+                            onClick={() => handleFieldChange('monteCarloMode', 'curveRegions')}
+                            className={clsx(
+                              "flex-1 px-4 py-2 rounded-xl border transition-all text-sm font-medium",
+                              params.monteCarloMode === 'curveRegions' ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-200" : "bg-gray-50 text-gray-500 border-black/5 hover:bg-gray-100"
+                            )}
+                          >
+                            Regiones Cerradas
                           </button>
                         </div>
                       </div>
@@ -746,6 +836,58 @@ export default function App() {
                       </div>
                     )}
 
+                    {activeAlgo === 'montecarlo' && params.monteCarloMode === 'curveRegions' && (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Curvas que delimitan la regiÃ³n</label>
+                          <button onClick={addCurveBoundary} className="text-[10px] text-emerald-600 hover:underline">+ AÃ±adir Curva</button>
+                        </div>
+                        <div className="space-y-2">
+                          {(params.curveBoundaryFunctions || []).map((curve, index) => (
+                            <div key={index} className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={curve}
+                                onChange={(e) => handleCurveBoundaryChange(index, e.target.value)}
+                                className="w-full px-4 py-2 bg-gray-50 border border-black/5 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-mono"
+                                placeholder={index === 0 ? 'x^2' : index === 1 ? 'sqrt(x)' : `Curva ${index + 1}`}
+                              />
+                              <button
+                                onClick={() => removeCurveBoundary(index)}
+                                disabled={(params.curveBoundaryFunctions || []).length <= 2}
+                                className="text-red-400 hover:text-red-600 disabled:text-gray-300 disabled:cursor-not-allowed"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-xs text-emerald-800">
+                          IngresÃ¡ varias curvas `y = f(x)` sobre el mismo intervalo `[a, b]`. El sistema detecta intersecciones y sÃ³lo calcula regiones cerradas entre ellas.
+                        </div>
+                        {output?.curveRegions && output.curveRegions.length > 0 && (
+                          <div className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3">
+                            <label className="text-xs font-semibold text-blue-900 uppercase tracking-wider">RegiÃ³n a Integrar</label>
+                            <select
+                              value={params.selectedCurveRegionIndex === undefined ? 'all' : String(params.selectedCurveRegionIndex)}
+                              onChange={(e) => handleFieldChange('selectedCurveRegionIndex', e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+                              className="w-full rounded-xl border border-blue-100 bg-white px-4 py-2 text-sm text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                            >
+                              <option value="all">Todas las regiones detectadas</option>
+                              {output.curveRegions.map((region, index) => (
+                                <option key={`${region.curveIndices.join('-')}-${index}`} value={index}>
+                                  {`R${index + 1}: x in [${region.xStart.toFixed(3)}, ${region.xEnd.toFixed(3)}], curvas ${region.curveIndices.map((curveIndex) => curveIndex + 1).join('-')}`}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="text-[11px] text-blue-700">
+                              ElegÃ­ una regiÃ³n concreta si no querÃ©s sumar todas. DespuÃ©s tocÃ¡ `Calcular` para actualizar el Ã¡rea.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {currentAlgoConfig?.fields.includes('points') && (
                       <div className="space-y-4">
                         <div className="flex justify-between items-center">
@@ -822,7 +964,7 @@ export default function App() {
                     )}
 
                     <div className="grid grid-cols-2 gap-4">
-                      {currentAlgoConfig?.fields.includes('a') && (activeAlgo !== 'montecarlo' || params.monteCarloMode === 'integration') && (
+                      {currentAlgoConfig?.fields.includes('a') && (activeAlgo !== 'montecarlo' || params.monteCarloMode !== 'pi') && (
                         <div className="space-y-1">
                           <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Límite a (x)</label>
                           <div className="relative">
@@ -845,7 +987,7 @@ export default function App() {
                           </div>
                         </div>
                       )}
-                      {currentAlgoConfig?.fields.includes('b') && (activeAlgo !== 'montecarlo' || params.monteCarloMode === 'integration') && (
+                      {currentAlgoConfig?.fields.includes('b') && (activeAlgo !== 'montecarlo' || params.monteCarloMode !== 'pi') && (
                         <div className="space-y-1">
                           <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Límite b (x)</label>
                           <div className="relative">
@@ -896,6 +1038,39 @@ export default function App() {
                             />
                           </div>
                         </div>
+                      )}
+                      
+                      {false && activeAlgo === 'montecarlo' && params.monteCarloMode === 'integration' && (params.dimensions || 1) === 2 && (
+                        <>
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">y inferior = f(x)</label>
+                            <input
+                              type="text"
+                              value={params.yLowerFormula || ''}
+                              onFocus={() => setLastFocusedInput('yLowerFormula')}
+                              onChange={(e) => handleFieldChange('yLowerFormula', e.target.value)}
+                              className="w-full px-4 py-2 bg-gray-50 border border-black/5 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-mono"
+                              placeholder="x^2"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">y superior = g(x)</label>
+                            <input
+                              type="text"
+                              value={params.yUpperFormula || ''}
+                              onFocus={() => setLastFocusedInput('yUpperFormula')}
+                              onChange={(e) => handleFieldChange('yUpperFormula', e.target.value)}
+                              className="w-full px-4 py-2 bg-gray-50 border border-black/5 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-mono"
+                              placeholder="sqrt(x)"
+                            />
+                          </div>
+                          <div className="col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-xs text-emerald-800">
+                            Para calcular el area entre curvas, usa `formula = 1`, `a` y `b` como intervalo en x, y completa `y inferior` y `y superior`.
+                          </div>
+                          <div className="col-span-2 rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs text-blue-800">
+                            Si completás ambas funciones, `c` y `d` ya no se usan: el sistema arma automáticamente el rectángulo de muestreo en `y`.
+                          </div>
+                        </>
                       )}
                       
                       {currentAlgoConfig?.fields.includes('e_limit') && params.monteCarloMode === 'integration' && (params.dimensions || 1) >= 3 && (
@@ -1093,6 +1268,11 @@ export default function App() {
                             className="w-full px-4 py-2 bg-gray-50 border border-black/5 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-mono"
                             placeholder="Ej: 0.001"
                           />
+                          {activeAlgo === 'montecarlo' && (
+                            <p className="text-[10px] text-gray-400">
+                              Si definÃ­s este error, el algoritmo puede cortar antes del tope de muestras.
+                            </p>
+                          )}
                         </div>
                       )}
 
@@ -1105,6 +1285,11 @@ export default function App() {
                             onChange={(e) => handleFieldChange('maxIterations', parseInt(e.target.value))}
                             className="w-full px-4 py-2 bg-gray-50 border border-black/5 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
                           />
+                          {activeAlgo === 'montecarlo' && (
+                            <p className="text-[10px] text-gray-400">
+                              Este valor funciona como tope; Monte Carlo puede detenerse antes si ya cumpliÃ³ el error pedido.
+                            </p>
+                          )}
                         </div>
                       )}
                       {currentAlgoConfig?.fields.includes('n') && (
@@ -1361,9 +1546,22 @@ export default function App() {
                       Visualización Gráfica
                     </h3>
                     <AlgorithmChart
+                      chartKind={activeAlgo === 'montecarlo'
+                        ? params.monteCarloMode === 'pi'
+                          ? 'montecarlo-pi'
+                          : params.monteCarloMode === 'curveRegions'
+                            ? 'montecarlo-curve-regions'
+                            : 'montecarlo-integration'
+                        : 'line'}
                       formula={params.formula}
                       exactFormula={activeAlgo === 'ode' ? params.exactFormula : undefined}
                       g_formula={['fixedPoint', 'aitken'].includes(activeAlgo || '') ? params.g_formula : undefined}
+                      curveBoundaryFunctions={activeAlgo === 'montecarlo' && params.monteCarloMode === 'curveRegions' ? params.curveBoundaryFunctions : undefined}
+                      curveRegions={activeAlgo === 'montecarlo' && params.monteCarloMode === 'curveRegions'
+                        ? output?.curveRegions && output.selectedCurveRegionIndex !== undefined && output.selectedCurveRegionIndex !== 'all'
+                          ? output.curveRegions.filter((_, index) => index === Number(output.selectedCurveRegionIndex))
+                          : output?.curveRegions
+                        : undefined}
                       derivativeFormula={activeAlgo === 'newton' ? output?.derivativeFormula : undefined}
                       showYEqualsX={['fixedPoint', 'aitken'].includes(activeAlgo || '')}
                       iterations={output?.iterations || []}
@@ -1954,26 +2152,32 @@ export default function App() {
               </div>
 
               <div className="h-[400px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={output.iterations} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="iteration" label={{ value: 'Iteraciones', position: 'insideBottom', offset: -10 }} />
-                    <YAxis label={{ value: 'Estimación', angle: -90, position: 'insideLeft' }} domain={['auto', 'auto']} />
-                    <Tooltip />
-                    <Legend verticalAlign="top" height={36} />
-                    <Line 
-                      type="monotone" 
-                      dataKey="estimate" 
-                      stroke="#4f46e5" 
-                      strokeWidth={2} 
-                      dot={false} 
-                      name="Valor Estimado" 
-                    />
-                    {activeAlgo === 'montecarlo' && params.monteCarloMode === 'pi' && (
-                      <ReferenceLine y={Math.PI} stroke="red" strokeDasharray="3 3" label="π" />
-                    )}
-                  </LineChart>
-                </ResponsiveContainer>
+                {convergenceData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={convergenceData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="iteration" label={{ value: 'Iteraciones', position: 'insideBottom', offset: -10 }} />
+                      <YAxis label={{ value: 'Estimación', angle: -90, position: 'insideLeft' }} domain={['auto', 'auto']} />
+                      <Tooltip />
+                      <Legend verticalAlign="top" height={36} />
+                      <Line 
+                        type="monotone" 
+                        dataKey="estimate" 
+                        stroke="#4f46e5" 
+                        strokeWidth={2} 
+                        dot={false} 
+                        name="Valor Estimado" 
+                      />
+                      {activeAlgo === 'montecarlo' && params.monteCarloMode === 'pi' && (
+                        <ReferenceLine y={Math.PI} stroke="red" strokeDasharray="3 3" label="π" />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-sm text-gray-500 bg-gray-50 rounded-xl border border-black/5">
+                    No hay datos de convergencia válidos para graficar.
+                  </div>
+                )}
               </div>
 
               <div className="pt-4 border-t border-black/5 text-center">

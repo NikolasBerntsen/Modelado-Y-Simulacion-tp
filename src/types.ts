@@ -10,6 +10,24 @@ export interface Point {
   x: number | string;
   y: number | string;
   inside?: boolean;
+  region?: 'inside-positive' | 'inside-negative' | 'inside-region' | 'outside';
+}
+
+export interface CurveRegionSegment {
+  xStart: number;
+  xEnd: number;
+  lowerCurveIndex: number;
+  upperCurveIndex: number;
+  lowerFormula: string;
+  upperFormula: string;
+}
+
+export interface CurveRegion {
+  xStart: number;
+  xEnd: number;
+  segments: CurveRegionSegment[];
+  curveIndices: number[];
+  curveFormulas: string[];
 }
 
 export interface AlgorithmParams {
@@ -32,7 +50,7 @@ export interface AlgorithmParams {
   useFunction?: boolean;
   isTrigMode?: boolean;
   seed?: string | number;
-  monteCarloMode?: 'pi' | 'integration';
+  monteCarloMode?: 'pi' | 'integration' | 'curveRegions';
   monteCarloMethod?: 'average' | 'hit-or-miss';
   gaussPts?: number;
   confidenceLevel?: number;
@@ -40,6 +58,10 @@ export interface AlgorithmParams {
   dimensions?: 1 | 2 | 3;
   c?: number | string;
   d?: number | string;
+  yLowerFormula?: string;
+  yUpperFormula?: string;
+  curveBoundaryFunctions?: string[];
+  selectedCurveRegionIndex?: number | string;
   e_limit?: number | string;
   f_limit?: number | string;
   exactFormula?: string;
@@ -58,6 +80,9 @@ export interface AlgorithmOutput {
   lagrangeBases?: string[];
   lagrangeExpanded?: { y: number; base: string }[];
   lagrangeFinal?: string;
+  curveRegions?: CurveRegion[];
+  curveBoundaryFunctions?: string[];
+  selectedCurveRegionIndex?: number | string;
   errorAnalysis?: {
     derivativeOrder: number;
     derivativeFormula: string;
