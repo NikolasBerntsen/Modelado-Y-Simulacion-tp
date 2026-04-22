@@ -1249,7 +1249,11 @@ export default function App() {
                           </div>
                         )}
                       </div>
-                      {output.errorMsg && <p className="text-red-700 text-sm mb-2">{output.errorMsg}</p>}
+                      {output.errorMsg && (
+                        <p className={`text-sm mb-2 ${output.converged ? 'text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200' : 'text-red-700'}`}>
+                          {output.converged ? '⚠ ' : ''}{output.errorMsg}
+                        </p>
+                      )}
                       {output.root !== undefined && output.root !== null && !isNaN(output.root) && (
                         <div className="mt-4 flex flex-wrap gap-8">
                           <div>
@@ -1266,8 +1270,13 @@ export default function App() {
                       )}
                       {output.result !== undefined && output.result !== null && (
                         <div className="mt-4">
-                          <p className="text-xs uppercase font-bold text-emerald-800/50 tracking-widest">Resultado</p>
-                          <p className="text-3xl font-mono font-bold text-emerald-900">{output.result}</p>
+                          <p className="text-xs uppercase font-bold text-emerald-800/50 tracking-widest">
+                            {activeAlgo === 'lagrange' ? 'Evaluación del Polinomio' : activeAlgo === 'ode' ? 'Solución Final' : 'Resultado'}
+                          </p>
+                          <p className={`font-mono font-bold text-emerald-900 ${String(output.result).length > 30 ? 'text-base mt-1' : 'text-3xl'}`}>{output.result}</p>
+                          {activeAlgo === 'montecarlo' && params.monteCarloMode === 'pi' && (
+                            <p className="text-xs text-emerald-700/60 mt-1">Error vs π real: {Math.abs(Math.PI - parseFloat(String(output.result))).toExponential(4)}</p>
+                          )}
                         </div>
                       )}
 
@@ -1279,37 +1288,62 @@ export default function App() {
                           </h4>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
                             <div className="space-y-2">
-                              <p className="text-blue-700 font-semibold flex items-center gap-2">
-                                <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[10px]">f<sup>({output.errorAnalysis.derivativeOrder})</sup></span>
-                                Derivada de orden {output.errorAnalysis.derivativeOrder}
-                              </p>
-                              <div className="p-3 bg-white/80 rounded-xl border border-blue-100 font-mono text-xs overflow-x-auto shadow-inner">
-                                {output.errorAnalysis.derivativeFormula}
-                              </div>
+                              {output.errorAnalysis.derivativeOrder > 0 && (
+                                <>
+                                  <p className="text-blue-700 font-semibold flex items-center gap-2">
+                                    <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[10px]">f<sup>({output.errorAnalysis.derivativeOrder})</sup></span>
+                                    Derivada de orden {output.errorAnalysis.derivativeOrder}
+                                  </p>
+                                  <div className="p-3 bg-white/80 rounded-xl border border-blue-100 font-mono text-xs overflow-x-auto shadow-inner flex items-center justify-center min-h-[44px]">
+                                    {(() => {
+                                      try {
+                                        const tex = math.parse(output.errorAnalysis.derivativeFormula).toTex();
+                                        return <InlineMath math={tex} />;
+                                      } catch (e) {
+                                        return <span>{output.errorAnalysis.derivativeFormula}</span>;
+                                      }
+                                    })()}
+                                  </div>
+                                </>
+                              )}
                             </div>
                             <div className="flex flex-col justify-center space-y-4">
                               {output.errorAnalysis.theoreticalFormula && (
                                 <div className="space-y-1">
                                   <p className="text-[10px] uppercase font-bold text-blue-400">Fórmula Teórica</p>
-                                  <div className="p-2 bg-blue-900/5 rounded-lg border border-blue-100 font-mono text-[10px] text-blue-800 italic">
-                                    {output.errorAnalysis.theoreticalFormula}
+                                  <div className="p-3 bg-blue-900/5 rounded-lg border border-blue-100 text-blue-800 flex items-center justify-center min-h-[44px] overflow-x-auto">
+                                    {(() => {
+                                      try {
+                                        return <InlineMath math={output.errorAnalysis.theoreticalFormula} />;
+                                      } catch (e) {
+                                        return <span className="font-mono text-[10px] italic">{output.errorAnalysis.theoreticalFormula}</span>;
+                                      }
+                                    })()}
                                   </div>
                                 </div>
                               )}
                               {output.errorAnalysis.substitutedFormula && (
                                 <div className="space-y-1">
                                   <p className="text-[10px] uppercase font-bold text-blue-400">Fórmula Sustituida</p>
-                                  <div className="p-2 bg-blue-900/5 rounded-lg border border-blue-100 font-mono text-[10px] text-blue-800">
-                                    {output.errorAnalysis.substitutedFormula}
+                                  <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-100 text-indigo-800 flex items-center justify-center min-h-[44px] overflow-x-auto">
+                                    {(() => {
+                                      try {
+                                        return <InlineMath math={output.errorAnalysis.substitutedFormula} />;
+                                      } catch (e) {
+                                        return <span className="font-mono text-[10px]">{output.errorAnalysis.substitutedFormula}</span>;
+                                      }
+                                    })()}
                                   </div>
                                 </div>
                               )}
-                              <div className="flex justify-between items-center p-3 bg-white/40 rounded-lg border border-blue-50">
-                                <span className="text-blue-600 font-medium">Máx |f<sup>({output.errorAnalysis.derivativeOrder})</sup>(ξ)|:</span>
-                                <span className="font-mono font-bold text-blue-900">{output.errorAnalysis.maxDerivativeValue.toExponential(4)}</span>
-                              </div>
+                              {output.errorAnalysis.derivativeOrder > 0 && (
+                                <div className="flex justify-between items-center p-3 bg-white/40 rounded-lg border border-blue-50">
+                                  <span className="text-blue-600 font-medium text-sm">Máx |f<sup>({output.errorAnalysis.derivativeOrder})</sup>(ξ)|:</span>
+                                  <span className="font-mono font-bold text-blue-900">{output.errorAnalysis.maxDerivativeValue.toExponential(4)}</span>
+                                </div>
+                              )}
                               <div className="flex justify-between items-center p-4 bg-blue-600 rounded-xl shadow-md shadow-blue-200">
-                                <span className="text-white font-bold">Error Global Estimado:</span>
+                                <span className="text-white font-bold">{output.errorAnalysis.derivativeOrder === 0 ? 'Semi-amplitud IC:' : 'Error Global Estimado:'}</span>
                                 <span className="font-mono font-black text-white text-lg">{output.errorAnalysis.globalError.toExponential(6)}</span>
                               </div>
                             </div>
@@ -1326,23 +1360,46 @@ export default function App() {
                     <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
                       Visualización Gráfica
                     </h3>
-                    <AlgorithmChart 
-                      formula={params.formula} 
+                    <AlgorithmChart
+                      formula={params.formula}
                       exactFormula={activeAlgo === 'ode' ? params.exactFormula : undefined}
                       g_formula={['fixedPoint', 'aitken'].includes(activeAlgo || '') ? params.g_formula : undefined}
                       derivativeFormula={activeAlgo === 'newton' ? output?.derivativeFormula : undefined}
                       showYEqualsX={['fixedPoint', 'aitken'].includes(activeAlgo || '')}
-                      iterations={output?.iterations || []} 
+                      iterations={output?.iterations || []}
                       points={output?.points as any}
                       monteCarloMode={activeAlgo === 'montecarlo' ? params.monteCarloMode : undefined}
                       dimensions={activeAlgo === 'montecarlo' ? params.dimensions : undefined}
+                      evaluationPoint={(() => {
+                        if (activeAlgo !== 'lagrange' || params.useFunction === false || !params.evaluationPoint) return undefined;
+                        try {
+                          const v = typeof params.evaluationPoint === 'number'
+                            ? params.evaluationPoint
+                            : math.evaluate(String(params.evaluationPoint));
+                          return typeof v === 'number' && isFinite(v) ? v : undefined;
+                        } catch { return undefined; }
+                      })()}
                     />
                   </div>
 
                   {activeAlgo === 'newton' && output && output.derivativeFormula && (
-                    <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl mb-6">
-                      <p className="text-xs font-bold text-emerald-800 uppercase tracking-widest mb-1">Derivada Calculada f'(x)</p>
-                      <p className="font-mono text-emerald-900 font-bold">{output.derivativeFormula}</p>
+                    <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl mb-6 flex items-center gap-4">
+                      <div>
+                        <p className="text-xs font-bold text-emerald-800 uppercase tracking-widest mb-2">Derivada Calculada f'(x)</p>
+                        <div className="flex items-center justify-center min-h-[36px]">
+                          {(() => {
+                            if (output.derivativeFormula.startsWith('[derivada')) {
+                              return <span className="font-mono text-amber-700 text-sm italic">{output.derivativeFormula}</span>;
+                            }
+                            try {
+                              const tex = math.parse(output.derivativeFormula).toTex();
+                              return <div className="text-emerald-900 text-xl"><InlineMath math={tex} /></div>;
+                            } catch (e) {
+                              return <span className="font-mono text-emerald-900 font-bold">{output.derivativeFormula}</span>;
+                            }
+                          })()}
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -1778,17 +1835,27 @@ export default function App() {
 
                   {activeAlgo !== 'aitken' && activeAlgo !== 'newton' && activeAlgo !== 'lagrange' && activeAlgo !== 'ode' && output && output.iterations.length > 0 && (
                     <div className="space-y-4">
-                      <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Tabla de Resultados</h3>
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Tabla de Resultados</h3>
+                        {['trapezoidal','simpson13','simpson38','midpoint'].includes(activeAlgo||'') && (
+                          <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded-md">{output.iterations.length} nodos</span>
+                        )}
+                      </div>
                       <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
                         <div className="overflow-x-auto">
                           <table className="w-full text-left text-sm">
                             <thead className="bg-gray-50 border-b border-black/5">
-                              <tr>
-                                <th className="px-6 py-4 font-semibold text-gray-600">Iter / Paso</th>
-                                <th className="px-6 py-4 font-semibold text-gray-600">x / t</th>
-                                <th className="px-6 py-4 font-semibold text-gray-600">f(x) / y</th>
-                                <th className="px-6 py-4 font-semibold text-gray-600">Error</th>
-                              </tr>
+                              {(() => {
+                                const isIntegration = ['trapezoidal','simpson13','simpson38','midpoint'].includes(activeAlgo||'');
+                                return (
+                                  <tr>
+                                    <th className="px-6 py-4 font-semibold text-gray-600">{isIntegration ? 'Nodo' : 'Iter / Paso'}</th>
+                                    <th className="px-6 py-4 font-semibold text-gray-600">{isIntegration ? 'x_i' : 'x / t'}</th>
+                                    <th className="px-6 py-4 font-semibold text-gray-600">{isIntegration ? 'f(x_i)' : 'f(x) / y'}</th>
+                                    {!isIntegration && <th className="px-6 py-4 font-semibold text-gray-600">Error</th>}
+                                  </tr>
+                                );
+                              })()}
                             </thead>
                             <tbody className="divide-y divide-black/5">
                               {output.iterations.map((it, idx) => {
@@ -1830,7 +1897,7 @@ export default function App() {
                                 }
 
                                 return (
-                                  <tr key={it.iteration} className={rowClass}>
+                                  <tr key={`${it.iteration}-${idx}`} className={rowClass}>
                                     <td className="px-6 py-4 font-mono">
                                       <div className="flex flex-col">
                                         <span className="text-gray-400">{it.iteration}</span>
@@ -1839,7 +1906,7 @@ export default function App() {
                                     </td>
                                     <td className="px-6 py-4 font-mono font-medium">{formatDisplayValue(it.x)}</td>
                                     <td className="px-6 py-4 font-mono">{formatDisplayValue(it.f_x)}</td>
-                                    <td className="px-6 py-4 font-mono text-emerald-600">{formatErrorValue(it.error)}</td>
+                                    {!isIntegration && <td className="px-6 py-4 font-mono text-emerald-600">{formatErrorValue(it.error)}</td>}
                                   </tr>
                                 );
                               })}

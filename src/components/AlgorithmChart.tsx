@@ -18,7 +18,7 @@ import {
 } from 'recharts';
 import { IterationResult, Point } from '../types';
 import { evaluate } from '../lib/algorithms';
-import { RefreshCcw, Search, ZoomIn, ZoomOut, MousePointer2 } from 'lucide-react';
+import { RefreshCcw, Search, MousePointer2 } from 'lucide-react';
 
 interface ChartProps {
   formula: string;
@@ -31,6 +31,7 @@ interface ChartProps {
   monteCarloMode?: 'pi' | 'integration';
   dimensions?: 1 | 2 | 3;
   exactFormula?: string;
+  evaluationPoint?: number;
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -66,7 +67,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-export const AlgorithmChart: React.FC<ChartProps> = ({ formula, exactFormula, g_formula, derivativeFormula, showYEqualsX, iterations, range, points: resultPoints, monteCarloMode, dimensions }) => {
+export const AlgorithmChart: React.FC<ChartProps> = ({ formula, exactFormula, g_formula, derivativeFormula, showYEqualsX, iterations, points: resultPoints, monteCarloMode, dimensions, evaluationPoint }) => {
   const [domainX, setDomainX] = React.useState<[number | string, number | string]>(['auto', 'auto']);
   const [refAreaLeft, setRefAreaLeft] = React.useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = React.useState<number | null>(null);
@@ -416,6 +417,15 @@ export const AlgorithmChart: React.FC<ChartProps> = ({ formula, exactFormula, g_
           
           <ReferenceLine y={0} stroke="#000" strokeWidth={1} strokeOpacity={0.2} />
           <ReferenceLine x={0} stroke="#000" strokeWidth={1} strokeOpacity={0.2} />
+          {evaluationPoint !== undefined && !isNaN(evaluationPoint) && (
+            <ReferenceLine
+              x={evaluationPoint}
+              stroke="#f59e0b"
+              strokeWidth={2}
+              strokeDasharray="6 3"
+              label={{ value: `x=${evaluationPoint.toFixed(4)}`, position: 'top', fontSize: 10, fill: '#b45309', fontWeight: 700 }}
+            />
+          )}
           
           <Line 
             data={data} 
